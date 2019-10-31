@@ -1,6 +1,6 @@
 import pytest
 from mycli.packages.parseutils import (
-    extract_tables, query_starts_with, queries_start_with, is_destructive, query_has_where_clause
+    extract_tables, query_starts_with, queries_start_with, is_destructive, query_has_complete_where_clause
 )
 
 
@@ -155,6 +155,13 @@ def test_is_destructive_update_without_where_clause():
     assert is_destructive(sql) is True
 
 
+def test_is_destructive_multiple_update_with_incomplete_where_clause():
+    sql = (
+        'UPDATE foo, bar SET foo.x = 1 WHERE foo.x = 2'
+    )
+    assert is_destructive(sql) is True
+
+
 @pytest.mark.parametrize(
     ('sql', 'has_where_clause'),
     [
@@ -163,4 +170,6 @@ def test_is_destructive_update_without_where_clause():
     ],
 )
 def test_query_has_where_clause(sql, has_where_clause):
-    assert query_has_where_clause(sql) is has_where_clause
+    import sqlparse
+    parsed_query = sqlparse.parse(sql)[0]
+    assert query_has_complete_where_clause(parsed_query) is has_where_clause

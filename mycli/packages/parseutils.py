@@ -203,13 +203,59 @@ def queries_start_with(queries, prefixes):
     return False
 
 
-def query_has_where_clause(query):
+def traverse_token(token):
+    for subtoken in getattr(token, 'tokens', []):
+        for t in traverse_token(subtoken):
+            yield t
+    yield token
+
+
+def _table_name_from_column_token(identifier):
+    if hasattr(identifier, 'tokens'):
+        return ''.join(map(str, identifier.tokens[:-2]))
+
+
+def query_has_complete_where_clause(tree):
     """Check if the query contains a where-clause."""
-    return any(
-        isinstance(token, sqlparse.sql.Where)
-        for token_list in sqlparse.parse(query)
-        for token in token_list
+    from sqlparse.tokens import Token
+
+    tokens = filter(lambda token: token.ttype != Token.Text.Whitespace, tree.tokens)
+    try:
+        next(
+            filter(lambda t: t.ttype == Token.Keyword and t.value.lower() == 'set', tokens)
+        )
+    except StopIteration:
+        return True
+
+    try:
+        setting_clause = next(tokens)
+    except StopIteration:
+        return True
+    else:
+        if isinstance(setting_clause, sqlparse.sql.Where):
+            return True
+
+    try:
+        where_clause = next(
+            filter(lambda t: isinstance(t, sqlparse.sql.Where), tokens)
+        )
+    except StopIteration:
+        return False
+
+    set_tokens = list(filter(lambda t: t.ttype != Token.Text.Whitespace, setting_clause))
+    set_name_tokens = (
+        tok for (tok, next_tok) in zip(set_tokens[:-1], set_tokens[1:])
+        if getattr(next_tok, 'ttype', None) == Token.Operator.Comparison
     )
+    set_names = set(filter(None, map(_table_name_from_column_token, set_name_tokens)))
+    if not set_names:
+        return True
+
+    where_tokens = traverse_token(where_clause)
+    where_name_tokens = filter(lambda t: t.ttype == Token.Name, where_tokens)
+    where_names = set(filter(None, map(_table_name_from_column_token, where_name_tokens)))
+
+    return set_names.issubset(where_names)
 
 
 def is_destructive(queries):
@@ -221,7 +267,7 @@ def is_destructive(queries):
                 return True
             elif query_starts_with(
                 query, ['update']
-            ) is True and not query_has_where_clause(query):
+            ) is True and not all(map(query_has_complete_where_clause, sqlparse.parse(query))):
                 return True
 
     return False
